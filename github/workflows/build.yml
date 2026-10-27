@@ -1,0 +1,56 @@
+name: Build APK
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Unzip Project
+        run: unzip cnmfox_mobile_final.zip
+
+      - name: Find Project Directory
+        id: find-dir
+        run: |
+          DIR=$(find . -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
+
+      - name: Ensure Internet Permission
+        run: |
+          MANIFEST="${{ steps.find-dir.outputs.dir }}/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Install dependencies
+        working-directory: ${{ steps.find-dir.outputs.dir }}
+        run: flutter pub get
+
+      - name: Generate Icons & Splash
+        working-directory: ${{ steps.find-dir.outputs.dir }}
+        run: |
+          dart run flutter_launcher_icons
+          dart run flutter_native_splash:create
+
+      - name: Build APK
+        working-directory: ${{ steps.find-dir.outputs.dir }}
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: cnmfox-apk
+          path: ${{ steps.find-dir.outputs.dir }}/build/app/outputs/flutter-apk/app-release.apk
