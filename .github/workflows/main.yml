@@ -17,23 +17,29 @@ jobs:
           DIR=$(find . -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "dir=$DIR" >> $GITHUB_OUTPUT
 
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.19.6'
+
+      - name: Create Missing Android Files
+        working-directory: ${{ steps.find-dir.outputs.dir }}
+        run: flutter create --org com.cnmfox --project-name cnmfox_mobile .
+
       - name: Ensure Internet Permission
+        working-directory: ${{ steps.find-dir.outputs.dir }}
         run: |
-          MANIFEST="${{ steps.find-dir.outputs.dir }}/android/app/src/main/AndroidManifest.xml"
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
           fi
 
       - name: Setup Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
 
       - name: Install dependencies
         working-directory: ${{ steps.find-dir.outputs.dir }}
