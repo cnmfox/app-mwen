@@ -8,32 +8,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Unzip Project
-        run: unzip cnmfox_mobile_final.zip
+      - name: Unzip User Project
+        run: unzip cnmfox_mobile_final.zip -d original_project
 
-      - name: Find Project Directory
+      - name: Find Source Directory
         id: find-dir
         run: |
-          DIR=$(find . -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
+          DIR=$(find original_project -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
           echo "dir=$DIR" >> $GITHUB_OUTPUT
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          flutter-version: '3.19.6'
-
-      - name: Create Missing Android Files
-        working-directory: ${{ steps.find-dir.outputs.dir }}
-        run: flutter create --org com.cnmfox --project-name cnmfox_mobile .
-
-      - name: Ensure Internet Permission
-        working-directory: ${{ steps.find-dir.outputs.dir }}
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
-          fi
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -41,22 +23,43 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.24.5'
+
+      - name: Create Fresh Android Base
+        run: flutter create --org com.cnmfox --project-name cnmfox_mobile app_build
+
+      - name: Copy App Files
+        run: |
+          cp -r ${{ steps.find-dir.outputs.dir }}/lib app_build/
+          if [ -d "${{ steps.find-dir.outputs.dir }}/assets" ]; then cp -r ${{ steps.find-dir.outputs.dir }}/assets app_build/; fi
+          cp ${{ steps.find-dir.outputs.dir }}/pubspec.yaml app_build/
+
+      - name: Ensure Internet Permission
+        working-directory: app_build
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
+
       - name: Install dependencies
-        working-directory: ${{ steps.find-dir.outputs.dir }}
+        working-directory: app_build
         run: flutter pub get
 
       - name: Generate Icons & Splash
-        working-directory: ${{ steps.find-dir.outputs.dir }}
+        working-directory: app_build
         run: |
           dart run flutter_launcher_icons
           dart run flutter_native_splash:create
 
       - name: Build APK
-        working-directory: ${{ steps.find-dir.outputs.dir }}
+        working-directory: app_build
         run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: cnmfox-apk
-          path: ${{ steps.find-dir.outputs.dir }}/build/app/outputs/flutter-apk/app-release.apk
+          path: app_build/build/app/outputs/flutter-apk/app-release.apk
