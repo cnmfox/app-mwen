@@ -38,6 +38,19 @@ jobs:
           if [ -d "${{ steps.find-dir.outputs.dir }}/assets" ]; then cp -r ${{ steps.find-dir.outputs.dir }}/assets app_build/; fi
           cp ${{ steps.find-dir.outputs.dir }}/pubspec.yaml app_build/
 
+      # ==========================================
+      # ETAP FIKSE PWOBLÈM YO OTOMATIKMAN
+      # ==========================================
+      - name: Fix Dart Syntax (withValues to withOpacity)
+        run: |
+          find app_build/lib -name "*.dart" -exec sed -i 's/withValues(alpha: /withOpacity(/g' {} +
+
+      - name: Fix compileSdk to 35
+        run: |
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 35/g' app_build/android/app/build.gradle
+          sed -i 's/compileSdkVersion 34/compileSdkVersion 35/g' app_build/android/app/build.gradle
+          sed -i 's/targetSdkVersion 34/targetSdkVersion 35/g' app_build/android/app/build.gradle
+
       - name: Ensure Internet Permission
         working-directory: app_build
         run: |
@@ -56,7 +69,7 @@ jobs:
 
       - name: Build APK
         working-directory: app_build
-        run: flutter build apk --release
+        run: flutter build apk --release --no-shrink
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
