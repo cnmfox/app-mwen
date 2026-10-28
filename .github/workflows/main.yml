@@ -38,9 +38,6 @@ jobs:
           if [ -d "${{ steps.find-dir.outputs.dir }}/assets" ]; then cp -r ${{ steps.find-dir.outputs.dir }}/assets app_build/; fi
           cp ${{ steps.find-dir.outputs.dir }}/pubspec.yaml app_build/
 
-      # ==========================================
-      # ETAP FIKSE PWOBLÈM YO OTOMATIKMAN
-      # ==========================================
       - name: Fix Dart Syntax (withValues to withOpacity)
         run: |
           find app_build/lib -name "*.dart" -exec sed -i 's/withValues(alpha: /withOpacity(/g' {} +
@@ -51,11 +48,22 @@ jobs:
           sed -i 's/compileSdkVersion 34/compileSdkVersion 35/g' app_build/android/app/build.gradle
           sed -i 's/targetSdkVersion 34/targetSdkVersion 35/g' app_build/android/app/build.gradle
 
-      - name: Ensure Internet Permission
-        working-directory: app_build
+      # ==========================================
+      # ETAP ENPÒTAN: PÈMISYON ENTÈNÈT AK WHATSAPP
+      # ==========================================
+      - name: Ensure Permissions and Queries
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
+          MANIFEST="app_build/android/app/src/main/AndroidManifest.xml"
+          
+          # 1. Ajoute pèmisyon entènèt
+          if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+            sed -i 's/<manifest/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/' "$MANIFEST"
+          fi
+          
+          # 2. Ajoute règ pou louvri WhatsApp ak lòt lyen
+          if ! grep -q "com.whatsapp" "$MANIFEST"; then
+            sed -i 's/<application/<queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" \/>\n            <data android:scheme="https" \/>\n        <\/intent>\n        <package android:name="com.whatsapp" \/>\n        <package android:name="com.whatsapp.w4b" \/>\n    <\/queries>\n    <application/' "$MANIFEST"
+          fi
 
       - name: Install dependencies
         working-directory: app_build
