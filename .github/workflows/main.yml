@@ -58,11 +58,11 @@ jobs:
           replacement = '''bool get hasWebsite {
             final w = website.trim();
             if (w.isEmpty) return false;
-            if (w.startsWith('+') || RegExp(r'^[0-9\\s\\-]+$').hasMatch(w)) return false;
+            if (w.startsWith('+') || RegExp(r'^[0-9\\s\\-]+\$').hasMatch(w)) return false;
             if (w.contains('google.com/maps') || w.contains('maps.app.goo.gl')) return false;
             return true;
           }'''
-          code = re.sub(pattern, replacement, code)
+          code = re.sub(pattern, lambda m: replacement, code)
           with open(file_path, 'w') as f: f.write(code)
           "
 
@@ -118,7 +118,6 @@ jobs:
             }
 
             Future<List<Prospect>> _scrapeApify(String token, String query, String cat, String source, int max, Function(String) onProgress) async {
-              // Itilize bon scraper a selon chwa a
               String actorId = source == 'facebook' ? 'apify~facebook-search-scraper' : 'compass~crawler-google-places';
               
               Map<String, dynamic> input = source == 'facebook' 
@@ -146,7 +145,6 @@ jobs:
                     String firstPhone = rawPhone;
                     String extraNotes = 'Sous: $source';
                     
-                    // SI GEN PLIZYE NIMEWO (separe pa vigil, konma, oswa slash)
                     if (rawPhone.contains(',') || rawPhone.contains('/') || rawPhone.contains('\n')) {
                       List<String> parts = rawPhone.split(RegExp(r'[,\/\n]'));
                       if (parts.isNotEmpty) {
