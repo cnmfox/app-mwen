@@ -48,19 +48,217 @@ jobs:
           sed -i 's/compileSdkVersion 34/compileSdkVersion 35/g' app_build/android/app/build.gradle
           sed -i 's/targetSdkVersion 34/targetSdkVersion 35/g' app_build/android/app/build.gradle
 
+      - name: Smart Website Checker
+        run: |
+          python3 -c "
+          import re
+          file_path = 'app_build/lib/models/prospect.dart'
+          with open(file_path, 'r') as f: code = f.read()
+          pattern = r'bool get hasWebsite => website\.trim\(\)\.isNotEmpty;'
+          replacement = '''bool get hasWebsite {
+            final w = website.trim();
+            if (w.isEmpty) return false;
+            if (w.startsWith('+') || RegExp(r'^[0-9\\s\\-]+$').hasMatch(w)) return false;
+            if (w.contains('google.com/maps') || w.contains('maps.app.goo.gl')) return false;
+            return true;
+          }'''
+          code = re.sub(pattern, replacement, code)
+          with open(file_path, 'w') as f: f.write(code)
+          "
+
       # ==========================================
-      # ETAP ENPÒTAN: PÈMISYON ENTÈNÈT AK WHATSAPP
+      # KÒD POU FÈ FACEBOOK AK JERE PLIZYE NIMEWO
       # ==========================================
+      - name: Inject New Scrape Screen
+        run: |
+          cat > app_build/lib/screens/scrape_screen.dart << 'EOF'
+          import 'package:flutter/material.dart';
+          import '../models/prospect.dart';
+          import '../services/settings_service.dart';
+          import '../services/storage.dart';
+          import 'dart:convert';
+          import 'package:http/http.dart' as http;
+
+          class ScrapeScreen extends StatefulWidget {
+            const ScrapeScreen({super.key});
+            @override
+            State<ScrapeScreen> createState() => _ScrapeScreenState();
+          }
+
+          class _ScrapeScreenState extends State<ScrapeScreen> {
+            String _source = 'google_maps';
+            String _category = 'Otèl';
+            String _city = 'Cap-Haïtien';
+            int _max = 30;
+            bool _running = false;
+            String _log = '';
+            List<Prospect> _results = [];
+
+            static const _cities = ['Cap-Haïtien', 'Port-au-Prince', 'Gonaïves', 'Les Cayes', 'Jacmel', 'Tout Ayiti', 'Lòt'];
+            static const _cats = ['Otèl', 'Restoran', 'Lekòl', 'Lòt'];
+
+            Future<void> _start() async {
+              final s = await SettingsService.load();
+              final token = s['apify'] ?? '';
+              if (token.isEmpty) {
+                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Mete Apify token nan Paramèt')));
+                return;
+              }
+              setState(() { _running = true; _log = ''; _results = []; });
+
+              try {
+                final query = _city == 'Tout Ayiti' ? '$_category Haiti' : '$_category $_city Haiti';
+                final result = await _scrapeApify(token, query, _category, _source, _max, (m) => setState(() => _log += '$m\n'));
+                setState(() { _results = result; _log += '\n✓ ${result.length} biznis!'; });
+              } catch (e) {
+                setState(() => _log += '\n✗ Erè: $e');
+              } finally {
+                setState(() => _running = false);
+              }
+            }
+
+            Future<List<Prospect>> _scrapeApify(String token, String query, String cat, String source, int max, Function(String) onProgress) async {
+              // Itilize bon scraper a selon chwa a
+              String actorId = source == 'facebook' ? 'apify~facebook-search-scraper' : 'compass~crawler-google-places';
+              
+              Map<String, dynamic> input = source == 'facebook' 
+                ? {"searchQueries": [query], "maxResults": max}
+                : {"searchStringsArray": [query], "language": "fr", "maxCrawledPlaces": max, "scrapeWebsite": true, "scrapePhone": true, "scrapeAddress": true, "scrapeUrl": true};
+
+              final resp = await http.post(Uri.parse('https://api.apify.com/v2/actors/$actorId/runs?token=$token'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(input));
+              if (resp.statusCode >= 400) throw Exception('Apify HTTP ${resp.statusCode}');
+              final runId = jsonDecode(resp.body)['data']['id'];
+              onProgress('✓ Run kreye sou $source...');
+
+              for (int i = 0; i < 60; i++) {
+                await Future.delayed(const Duration(seconds: 5));
+                final sResp = await http.get(Uri.parse('https://api.apify.com/v2/actor-runs/$runId?token=$token'));
+                final data = jsonDecode(sResp.body)['data'];
+                final status = data['status'];
+                onProgress('⏳ ($i/60) — $status');
+                
+                if (status == 'SUCCEEDED') {
+                  final itemsResp = await http.get(Uri.parse('https://api.apify.com/v2/datasets/${data['defaultDatasetId']}/items?token=$token'));
+                  final items = jsonDecode(itemsResp.body) as List;
+                  
+                  return items.map((i) {
+                    String rawPhone = (i['phone'] ?? i['phoneNumber'] ?? i['mobile'] ?? '').toString();
+                    String firstPhone = rawPhone;
+                    String extraNotes = 'Sous: $source';
+                    
+                    // SI GEN PLIZYE NIMEWO (separe pa vigil, konma, oswa slash)
+                    if (rawPhone.contains(',') || rawPhone.contains('/') || rawPhone.contains('\n')) {
+                      List<String> parts = rawPhone.split(RegExp(r'[,\/\n]'));
+                      if (parts.isNotEmpty) {
+                        firstPhone = parts[0].trim();
+                        String others = parts.skip(1).join(', ').trim();
+                        if (others.isNotEmpty) {
+                          extraNotes += ' | Lòt nimewo: $others';
+                        }
+                      }
+                    }
+
+                    return Prospect(
+                      id: 0,
+                      name: (i['pageName'] ?? i['title'] ?? i['name'] ?? '').toString(),
+                      category: cat,
+                      address: (i['address'] ?? '').toString(),
+                      phone: firstPhone,
+                      website: (i['website'] ?? '').toString(),
+                      mapsUrl: (i['pageUrl'] ?? i['url'] ?? '').toString(),
+                      rating: (i['totalScore'] ?? '').toString(),
+                      status: 'Nouvo',
+                      date: DateTime.now().toIso8601String().substring(0, 10),
+                      notes: extraNotes,
+                      source: source == 'facebook' ? 'Facebook' : 'Google Maps',
+                    );
+                  }).toList();
+                } else if (['FAILED', 'TIMED-OUT', 'ABORTED'].contains(status)) {
+                  throw Exception('Run echwe: $status');
+                }
+              }
+              throw Exception('Timeout');
+            }
+
+            Future<void> _save() async {
+              if (_results.isEmpty) return;
+              final existing = await Storage.loadAll();
+              int next = existing.isEmpty ? 1 : existing.map((p) => p.id).reduce((a, b) => a > b ? a : b) + 1;
+              for (final p in _results) { p.id = next++; }
+              await Storage.saveAll([...existing, ..._results]);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✓ ${_results.length} anrejistre!'), backgroundColor: Colors.green));
+                Navigator.pop(context);
+              }
+            }
+
+            @override
+            Widget build(BuildContext c) => Scaffold(
+              appBar: AppBar(title: const Text('Scraping')),
+              body: ListView(padding: const EdgeInsets.all(16), children: [
+                const Text('Kote pou chèche:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'google_maps', label: Text('Google Maps'), icon: Icon(Icons.map)),
+                    ButtonSegment(value: 'facebook', label: Text('Facebook'), icon: Icon(Icons.facebook)),
+                  ],
+                  selected: {_source},
+                  onSelectionChanged: (v) => setState(() => _source = v.first),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: _category,
+                  decoration: const InputDecoration(labelText: 'Kategori', border: OutlineInputBorder()),
+                  items: _cats.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+                  onChanged: (v) => setState(() => _category = v!),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _city,
+                  decoration: const InputDecoration(labelText: 'Vil', border: OutlineInputBorder()),
+                  items: _cities.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+                  onChanged: (v) => setState(() => _city = v!),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  initialValue: '$_max',
+                  decoration: const InputDecoration(labelText: 'Kantite', border: OutlineInputBorder()),
+                  keyboardType: TextInputType.number,
+                  onChanged: (v) => setState(() => _max = int.tryParse(v) ?? 30),
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: _running ? null : _start,
+                  icon: _running ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.play_arrow),
+                  label: Text(_running ? 'Ap travay...' : 'Kòmanse'),
+                ),
+                if (_log.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                    child: Text(_log, style: const TextStyle(color: Colors.greenAccent, fontFamily: 'monospace', fontSize: 11)),
+                  ),
+                ],
+                if (_results.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text('${_results.length} rezilta:', style: Theme.of(c).textTheme.titleMedium),
+                  ..._results.take(8).map((p) => ListTile(dense: true, leading: const Icon(Icons.store, size: 18), title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis), subtitle: Text(p.phone))),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save), label: Text('Anrejistre ${_results.length}')),
+                ],
+              ]),
+            );
+          }
+          EOF
+
       - name: Ensure Permissions and Queries
         run: |
           MANIFEST="app_build/android/app/src/main/AndroidManifest.xml"
-          
-          # 1. Ajoute pèmisyon entènèt
           if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
             sed -i 's/<manifest/<manifest xmlns:android="http:\/\/schemas.android.com\/apk\/res\/android">\n    <uses-permission android:name="android.permission.INTERNET"\/>/' "$MANIFEST"
           fi
-          
-          # 2. Ajoute règ pou louvri WhatsApp ak lòt lyen
           if ! grep -q "com.whatsapp" "$MANIFEST"; then
             sed -i 's/<application/<queries>\n        <intent>\n            <action android:name="android.intent.action.VIEW" \/>\n            <data android:scheme="https" \/>\n        <\/intent>\n        <package android:name="com.whatsapp" \/>\n        <package android:name="com.whatsapp.w4b" \/>\n    <\/queries>\n    <application/' "$MANIFEST"
           fi
